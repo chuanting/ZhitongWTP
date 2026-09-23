@@ -1,6 +1,8 @@
 # 构建静态展示版并发布到 GitHub Pages。
 #
-# 前置：仓库 Settings → Pages → Source 选 "GitHub Actions"。
+# configure-pages 会自动把 Pages 切到 "GitHub Actions" 构建模式（enablement: true），
+# 无需手动去 Settings 里改。若仓库此前是 "Deploy from a branch"，首次运行会自动切换，
+# 之后 GitHub 自带的 Jekyll 工作流（pages-build-deployment）不再接管。
 # 注意 GitHub Free 版只能从公开仓库发布 Pages。
 name: Deploy static demo to Pages
 
@@ -27,6 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 启用 Pages 并强制走 Actions 构建模式，同时拿到正确的子路径
+      - name: 配置 Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -40,8 +49,8 @@ jobs:
       - name: 构建静态展示版
         working-directory: frontend
         env:
-          # Pages 部署在 https://<用户名>.github.io/<仓库名>/ 子路径下
-          VITE_BASE: /${{ github.event.repository.name }}/
+          # configure-pages 给出的 base_path 形如 /ZhitongWTP，Vite 需要结尾带斜杠
+          VITE_BASE: ${{ steps.pages.outputs.base_path }}/
         run: npm run build:static
 
       - name: 确认预计算数据已打包
@@ -50,6 +59,9 @@ jobs:
           test -f dist-static/demo-data/manifest.json \
             || { echo "::error::缺少 demo-data，请先在本地跑 scripts/build_static_demo.py 并提交产物"; exit 1; }
           echo "静态数据大小：$(du -sh dist-static/demo-data | cut -f1)"
+          # 兜底：若将来回落到分支模式，也不让 Jekyll 处理构建产物
+          touch dist-static/.nojekyll
+          echo "构建 base：${VITE_BASE}"
 
       - uses: actions/upload-pages-artifact@v3
         with:
