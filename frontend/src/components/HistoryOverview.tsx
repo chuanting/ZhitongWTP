@@ -3,7 +3,7 @@ import type { EChartsOption } from 'echarts'
 import EChart from './EChart'
 import { baseOption } from './chartBase'
 import { CHART, SERIES, type Mode } from '../theme'
-import { api } from '../api'
+import { client as api } from '../client'
 import { formatDateTimeFull, formatValue, scaleSeries } from '../format'
 
 interface Overview { timestamps: string[]; values: (number | null)[]; downsampled: boolean; source_points: number }

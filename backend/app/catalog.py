@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from . import config
+from . import config, dataquality
 
 
 # ── 通道（指标）字典 ────────────────────────────────────────────────────────
@@ -119,6 +119,27 @@ def _build_dataset(df: pd.DataFrame, *, ds_id: str, name: str, source: str,
 def load_frame(ds: Dataset) -> pd.DataFrame:
     df = pd.read_csv(ds.path, parse_dates=["timestamp"], index_col="timestamp")
     return df.sort_index()
+
+
+_quality_cache: Dict[str, tuple[float, List[Dict[str, Any]]]] = {}
+
+
+def quality_issues(ds: Dataset) -> List[Dict[str, Any]]:
+    """数据质量检查结果，按文件修改时间缓存。"""
+    try:
+        stamp = Path(ds.path).stat().st_mtime
+    except OSError:
+        stamp = 0.0
+    cached = _quality_cache.get(ds.id)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    issues = dataquality.summarize(load_frame(ds), ds.season_period)
+    _quality_cache[ds.id] = (stamp, issues)
+    return issues
+
+
+def replicated_tail(ds: Dataset) -> Optional[Dict[str, Any]]:
+    return next((i for i in quality_issues(ds) if i["kind"] == "replicated_tail"), None)
 
 
 def _demo_datasets() -> Dict[str, Dataset]:

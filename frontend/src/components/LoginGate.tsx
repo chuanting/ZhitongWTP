@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api } from '../api'
+import { client as api } from '../client'
 import { Alert, Button, Spinner } from './ui'
 
 /** 共享口令登录页。只挡扫描器和误入者，不做用户体系。 */

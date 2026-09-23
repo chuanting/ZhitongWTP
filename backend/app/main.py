@@ -144,7 +144,11 @@ def model(_: None = Depends(require_auth)) -> Dict[str, Any]:
 
 @app.get("/api/datasets")
 def list_datasets(_: None = Depends(require_auth)) -> Dict[str, Any]:
-    items = [d.to_dict() for d in catalog.all_datasets().values()]
+    items = []
+    for d in catalog.all_datasets().values():
+        raw = d.to_dict()
+        raw["quality"] = catalog.quality_issues(d)
+        items.append(raw)
     items.sort(key=lambda d: (d["source"] != "demo", d["name"]))
     return {"datasets": items, "defaults": {
         "context_length": config.DEFAULT_CONTEXT_LENGTH,
@@ -211,8 +215,13 @@ def delete_dataset(ds_id: str, _: None = Depends(require_auth)) -> Dict[str, Any
 
 
 # ── 预测 ────────────────────────────────────────────────────────────────────
-def _resolve_anchor(df: pd.DataFrame, req: ForecastRequest) -> int:
-    """把 anchor 时刻解析成上下文结束的行号（含该行）。"""
+def _resolve_anchor(df: pd.DataFrame, req: ForecastRequest,
+                    ds: "catalog.Dataset") -> int:
+    """把 anchor 时刻解析成上下文结束的行号（含该行）。
+
+    未指定 anchor 时，默认起点要避开「整周期复制」的伪造尾段——
+    否则模型在上下文里已逐字见过预测窗口，回测指标毫无意义。
+    """
     n = len(df)
     if req.anchor:
         try:
@@ -224,6 +233,10 @@ def _resolve_anchor(df: pd.DataFrame, req: ForecastRequest) -> int:
             raise HTTPException(400, "预测起点早于数据起始时间")
     else:
         pos = n - 1 - req.prediction_length      # 默认留出一个完整的真实值窗口做回测
+        tail = catalog.replicated_tail(ds)
+        if tail:
+            clean_pos = int(df.index.searchsorted(pd.Timestamp(tail["clean_end"]), side="right")) - 1
+            pos = min(pos, clean_pos - req.prediction_length)
     pos = max(0, min(pos, n - 1))
     if pos + 1 < 24:
         raise HTTPException(400, "该预测起点之前的历史不足 24 个时间点")
@@ -241,7 +254,7 @@ def run_forecast(req: ForecastRequest, request: Request,
     if unknown:
         raise HTTPException(400, f"数据集不含通道：{', '.join(unknown)}")
 
-    anchor_pos = _resolve_anchor(df, req)
+    anchor_pos = _resolve_anchor(df, req, ds)
     ctx_start = max(0, anchor_pos + 1 - req.context_length)
     context = df.iloc[ctx_start: anchor_pos + 1]
     if len(context) < 24:
@@ -305,8 +318,20 @@ def run_forecast(req: ForecastRequest, request: Request,
     if not channels_out:
         raise HTTPException(500, "模型未返回任何通道的预测结果")
 
+    warnings_out: List[Dict[str, Any]] = []
+    tail = catalog.replicated_tail(ds)
+    if tail:
+        rep_start = pd.Timestamp(tail["replicated_start"])
+        window_end = horizon_index[-1]
+        if window_end >= rep_start and context.index[-1] >= rep_start:
+            warnings_out.append({**tail, "scope": "context_and_horizon", "severity": "warning"})
+        elif window_end >= rep_start or context.index[-1] >= rep_start:
+            warnings_out.append({**tail, "scope": "partial", "severity": "warning"})
+
     return {
         "dataset": ds.to_dict(),
+        "quality": catalog.quality_issues(ds),
+        "warnings": warnings_out,
         "model": {**predictor.model_info(), "inference_seconds": round(infer_s, 3)},
         "config": {
             "anchor": context.index[-1].isoformat(),

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, downloadCsv, UnauthorizedError, type AuthStatus, type Dataset, type Defaults, type ForecastRequest, type ForecastResult, type ModelInfo } from './api'
+import { downloadCsv, UnauthorizedError, type AuthStatus, type Dataset, type Defaults, type ForecastRequest, type ForecastResult, type ModelInfo } from './api'
+import { client as api, IS_STATIC, scenariosFor } from './client'
+import type { StaticScenario } from './staticApi'
 import { applyMode, readMode, SERIES, type Mode } from './theme'
 import { describeFinetune, formatDateTimeFull, formatNumber } from './format'
 import TopBar from './components/TopBar'
@@ -42,10 +44,24 @@ export default function App() {
   const [notes, setNotes] = useState<string[]>([])
   const [booting, setBooting] = useState(true)
   const [auth, setAuth] = useState<AuthStatus | null>(null)
+  const [scenarios, setScenarios] = useState<StaticScenario[]>([])
   const [exporting, setExporting] = useState(false)
   const autoRan = useRef(false)
 
   const dataset = datasets.find((d) => d.id === datasetId)
+
+  // 静态演示版：预测起点只能从预计算场景里选
+  useEffect(() => {
+    if (!IS_STATIC || !datasetId) return
+    let alive = true
+    scenariosFor(datasetId).then((list) => {
+      if (!alive) return
+      setScenarios(list)
+      setConfig((c) => (list.length ? { ...c, anchor: list[0].anchor,
+                                        predictionLength: list[0].prediction_length } : c))
+    })
+    return () => { alive = false }
+  }, [datasetId])
 
   useEffect(() => { applyMode(mode) }, [mode])
 
@@ -199,6 +215,7 @@ export default function App() {
                 }} />
               <div className="my-4 border-t border-edge" />
               <ControlPanel dataset={dataset} defaults={defaults} config={config} running={running}
+                scenarios={IS_STATIC ? scenarios : undefined}
                 onChange={(patch) => setConfig((c) => ({ ...c, ...patch }))} onRun={run} />
             </>
           )}
@@ -212,6 +229,12 @@ export default function App() {
               </Alert>
             )}
             {error && <Alert title="出错了" onClose={() => setError(null)}>{error}</Alert>}
+
+            {result?.warnings?.map((w) => (
+              <Alert key={w.kind + w.scope} tone="warning" title="该预测窗口的评估结果不可信">
+                {w.message}
+              </Alert>
+            ))}
 
             {!result && (running || booting) && (
               <Card className="flex h-[420px] flex-col items-center justify-center gap-3">

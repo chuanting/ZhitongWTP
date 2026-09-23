@@ -8,6 +8,17 @@ export interface ChannelInfo {
   group: string
 }
 
+export interface QualityIssue {
+  kind: 'replicated_tail' | 'gaps'
+  severity: 'warning' | 'info'
+  message: string
+  points?: number
+  period_label?: string
+  clean_end?: string
+  replicated_start?: string
+  scope?: string
+}
+
 export interface Dataset {
   id: string
   name: string
@@ -22,6 +33,7 @@ export interface Dataset {
   season_period: number
   missing: Record<string, number>
   meta: Record<string, string>
+  quality?: QualityIssue[]
 }
 
 export interface Defaults {
@@ -100,6 +112,8 @@ export interface ModelInfo {
 
 export interface ForecastResult {
   dataset: Dataset
+  quality?: QualityIssue[]
+  warnings?: QualityIssue[]
   model: ModelInfo
   config: {
     anchor: string

@@ -1,6 +1,7 @@
 import type { Dataset, Defaults } from '../api'
 import { Button, Label, SectionTitle, Segmented, Spinner } from './ui'
 import { describeWindow, formatDateTimeFull, stepMillis, toLocalInput } from '../format'
+import type { StaticScenario } from '../staticApi'
 
 export interface RunConfig {
   channels: string[]
@@ -19,13 +20,15 @@ const INTERVALS: { value: string; label: string; quantiles: number[]; title: str
   { value: '90', label: '90%', quantiles: [0.05, 0.5, 0.95], title: 'P5–P95 预测区间' },
 ]
 
-export default function ControlPanel({ dataset, defaults, config, onChange, onRun, running }: {
+export default function ControlPanel({ dataset, defaults, config, onChange, onRun, running, scenarios }: {
   dataset: Dataset | undefined
   defaults: Defaults | null
   config: RunConfig
   onChange: (patch: Partial<RunConfig>) => void
   onRun: () => void
   running: boolean
+  /** 静态演示版传入预计算场景；为空表示在线模式，起点可任选 */
+  scenarios?: StaticScenario[]
 }) {
   if (!dataset) return null
 
@@ -91,6 +94,30 @@ export default function ControlPanel({ dataset, defaults, config, onChange, onRu
           onChange={(v) => onChange({ quantiles: INTERVALS.find((i) => i.value === v)!.quantiles })} />
       </div>
 
+      {scenarios && scenarios.length > 0 ? (
+        <div className="mb-4">
+          <Label hint={`${scenarios.length} 个预计算场景`}>预测起点</Label>
+          <select
+            value={config.anchor ?? scenarios[0].anchor}
+            onChange={(e) => {
+              const sc = scenarios.find((s) => s.anchor === e.target.value)
+              onChange({ anchor: e.target.value,
+                         ...(sc ? { predictionLength: sc.prediction_length } : {}) })
+            }}
+            className="tnum w-full rounded-md border border-edge bg-surface-2 px-2.5 py-1.5
+                       text-[12px] text-ink focus-visible:border-accent focus-visible:outline-none">
+            {scenarios.map((s) => (
+              <option key={s.id} value={s.anchor}>
+                {formatDateTimeFull(s.anchor)} · 预测 {s.prediction_length} 小时
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-ink-3">
+            静态演示版只能选预先算好的场景。全部锚点都落在数据可信区间内
+            （源数据末尾有一段整周复制的补齐数据，已排除）。
+          </p>
+        </div>
+      ) : (
       <div className="mb-4">
         <Label hint={config.anchor ? '自定义' : '自动'}>预测起点</Label>
         <input
@@ -118,6 +145,7 @@ export default function ControlPanel({ dataset, defaults, config, onChange, onRu
           该时刻及之前的数据作为模型输入，之后的 {config.predictionLength} 个点为预测窗口。
         </p>
       </div>
+      )}
 
       <label className="mb-4 flex cursor-pointer items-center gap-2 text-[12px] text-ink-2">
         <input type="checkbox" checked={config.baseline} className="accent-[var(--accent)]"

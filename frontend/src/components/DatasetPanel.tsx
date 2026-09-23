@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Dataset } from '../api'
-import { api } from '../api'
+import { client as api, IS_STATIC } from '../client'
 import { Alert, Badge, SectionTitle, Spinner } from './ui'
 import { formatDateTimeFull } from '../format'
 
@@ -20,6 +20,11 @@ function Row({ ds, active, onSelect, onDelete }: {
           <Badge tone="neutral">{ds.meta.band}</Badge>
         ) : (
           <Badge tone="accent">已上传</Badge>
+        )}
+        {ds.quality?.some((q) => q.severity === 'warning') && (
+          <Badge tone="warning" title={ds.quality.find((q) => q.severity === 'warning')?.message}>
+            数据存疑
+          </Badge>
         )}
         {onDelete && (
           <button
@@ -104,6 +109,13 @@ export default function DatasetPanel({ datasets, selectedId, onSelect, onUploade
         </>
       )}
 
+      {IS_STATIC ? (
+        <div className="mt-3 rounded-md border border-dashed border-edge px-3 py-3 text-[11px] leading-relaxed text-ink-3">
+          <div className="mb-1 text-[12px] font-medium text-ink-2">静态演示版</div>
+          本页所有结果由模型离线算好后静态托管，没有后端。
+          要上传自己的 CSV、自选任意预测起点，请参照仓库说明部署完整版。
+        </div>
+      ) : (
       <div
         onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
@@ -129,6 +141,8 @@ export default function DatasetPanel({ datasets, selectedId, onSelect, onUploade
           </>
         )}
       </div>
+
+      )}
 
       {error && <div className="mt-2"><Alert onClose={() => setError(null)}>{error}</Alert></div>}
 

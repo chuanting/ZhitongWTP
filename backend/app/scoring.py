@@ -28,20 +28,27 @@ def weighted_quantile_loss(
     """WQL = Σ_q Σ_t 2·ρ_q(y_t − f_q,t) / (|Q| · Σ_t |y_t|)。
 
     分位数预测的标准归一化指标，可跨量纲比较；越小越好。
+
+    分子分母必须落在同一组有效点上：真实值缺失时若分母仍按整段求和，
+    结果会被 NaN 污染（且 NaN < EPS 为 False，判不出来）。
     """
     if not preds:
         return None
-    denom = float(np.sum(np.abs(y)))
-    if denom < EPS:
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(y)
+    for f in preds.values():
+        mask &= np.isfinite(np.asarray(f, dtype=float))
+    if not mask.any():
+        return None
+    denom = float(np.sum(np.abs(y[mask])))
+    if not np.isfinite(denom) or denom < EPS:
         return None
     total = 0.0
     for q, f in preds.items():
-        yy, ff = _pairwise(y, f)
-        if yy.size == 0:
-            return None
-        u = yy - ff
+        u = y[mask] - np.asarray(f, dtype=float)[mask]
         total += 2.0 * float(np.sum(np.maximum(q * u, (q - 1.0) * u)))
-    return total / (len(preds) * denom)
+    value = total / (len(preds) * denom)
+    return value if np.isfinite(value) else None
 
 
 def seasonal_naive_scale(context: np.ndarray, period: int) -> Optional[float]:
