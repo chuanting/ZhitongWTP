@@ -111,18 +111,24 @@ upload_limiter = RateLimiter(config.RATE_UPLOAD, 3600, "upload")
 
 
 def client_ip(headers: Dict[str, str], fallback: str) -> str:
-    """取真实客户端 IP。
+    """取真实客户端 IP，用于按来源限流。
 
-    仅在 NETAI_TRUST_PROXY 打开时才相信 X-Forwarded-For——
-    该头可被伪造，直接暴露的服务不能信任它，否则限流会被轻易绕过。
+    仅在 NETAI_TRUST_PROXY 打开时才读取这些头——它们都能被伪造，
+    直接暴露的服务一旦信任就等于把限流拱手让人。
+
+    优先级按「可信度」排：Cloudflare Tunnel 下 CF-Connecting-IP 由
+    Cloudflare 边缘写入且客户端无法覆盖，比 X-Forwarded-For 可靠
+    （后者在多层代理下是一串拼接值，最左侧那个恰恰是客户端自己填的）。
     """
-    if config.TRUST_PROXY:
-        fwd = headers.get("x-forwarded-for", "")
-        if fwd:
-            return fwd.split(",")[0].strip()
-        real = headers.get("x-real-ip", "")
-        if real:
-            return real.strip()
+    if not config.TRUST_PROXY:
+        return fallback
+    for key in ("cf-connecting-ip", "x-real-ip"):
+        value = headers.get(key, "").strip()
+        if value:
+            return value
+    fwd = headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
     return fallback
 
 

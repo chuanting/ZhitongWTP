@@ -1,0 +1,20 @@
+# GPU 服务器（不用 Docker 时）: /etc/systemd/system/cloudflared.service
+# 用 Docker Compose 方式部署则不需要这个文件。
+[Unit]
+Description=Cloudflare Tunnel (NetAILLM console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=cloudflared
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/bin/cloudflared --config /etc/cloudflared/config.yml --no-autoupdate tunnel run
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/cloudflared
+
+[Install]
+WantedBy=multi-user.target

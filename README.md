@@ -21,8 +21,14 @@ CSV，选择指标与预测窗口，一键得到概率预测、真实值对比�
 ./run.sh dev             # 开发模式：后端 :8010 + Vite 热更新 :5180
 ```
 
-部署到 GPU 服务器并发布到公网，见 **[DEPLOY.md](DEPLOY.md)**（Docker + frp 内网穿透 +
-nginx HTTPS，带访问口令、限流、推理排队和上传自动清理）。
+部署到 GPU 服务器并发布到公网：
+
+- **[CLOUDFLARE.md](CLOUDFLARE.md)** —— Cloudflare Tunnel。不用公网 IP、不用 VPS、
+  不用备案，HTTPS 自动签发；国内访问走境外节点，速度不如下面那套。
+- **[DEPLOY.md](DEPLOY.md)** —— Docker + frp 内网穿透 + 境内 VPS 的 nginx HTTPS。
+  国内访问更快更稳，但需要一台 VPS 且域名要备案。
+
+两套都带访问口令、限流、推理排队和上传自动清理。
 
 首次启动会加载 Chronos-2 权重（约 2 秒，之后常驻内存）。
 

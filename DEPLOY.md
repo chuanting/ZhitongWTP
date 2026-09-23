@@ -123,21 +123,7 @@ sudo systemctl enable --now frpc && sudo journalctl -u frpc -f
 ## 备选：Cloudflare Tunnel（不用 VPS、不用备案）
 
 适合还没备案、或不想维护 VPS 的情况。代价是国内访问走境外节点，速度不稳定。
-
-```bash
-# GPU 服务器上
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cf.deb
-sudo dpkg -i cf.deb
-cloudflared tunnel login
-cloudflared tunnel create netai
-cloudflared tunnel route dns netai netai.你的域名
-cp deploy/cloudflared/config.yml ~/.cloudflared/config.yml
-vim ~/.cloudflared/config.yml      # 填 TUNNEL_ID 和域名
-sudo cloudflared service install && sudo systemctl enable --now cloudflared
-```
-
-域名需要托管在 Cloudflare。HTTPS 自动有，无需 certbot。
-想再加一层身份认证可以开 Cloudflare Access（免费额度 50 用户），这时应用里的口令可以关掉。
+完整步骤见 **[CLOUDFLARE.md](CLOUDFLARE.md)**，含一条两分钟出公网地址的临时隧道命令。
 
 ---
 

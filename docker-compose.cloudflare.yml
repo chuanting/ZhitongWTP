@@ -1,0 +1,31 @@
+# Cloudflare Tunnel 叠加配置
+#   docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+#
+# cloudflared 与应用在同一个 compose 网络里，因此隧道的源站地址要填
+# 容器名 http://netai:8010，而不是 127.0.0.1:8010 —— 后者在 cloudflared
+# 容器内指的是它自己，是最常见的配置错误。
+#
+# 基础文件里 netai 仍然把 8010 发布在宿主机回环上（127.0.0.1:8010），
+# 那只是为了本机 curl 排查；它不对公网开放，公网入口只有 Cloudflare。
+
+services:
+  netai:
+    environment:
+      # Cloudflare 边缘写入 CF-Connecting-IP，限流据此识别真实访问者
+      NETAI_TRUST_PROXY: "1"
+      # Cloudflare 始终以 HTTPS 对外，Cookie 必须带 Secure
+      NETAI_COOKIE_SECURE: "1"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: netai-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?请在 .env 中填入 Cloudflare Tunnel token}"
+    depends_on:
+      netai:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
