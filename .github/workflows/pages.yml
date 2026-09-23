@@ -29,9 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 启用 Pages 并强制走 Actions 构建模式，同时拿到正确的子路径
+      # 尝试自动把 Pages 切到 Actions 构建模式。若仓库的 workflow 权限被设为只读，
+      # 这一步会失败——不让它阻断构建，base 路径回退到仓库名即可。
       - name: 配置 Pages
         id: pages
+        continue-on-error: true
         uses: actions/configure-pages@v5
         with:
           enablement: true
@@ -49,8 +51,8 @@ jobs:
       - name: 构建静态展示版
         working-directory: frontend
         env:
-          # configure-pages 给出的 base_path 形如 /ZhitongWTP，Vite 需要结尾带斜杠
-          VITE_BASE: ${{ steps.pages.outputs.base_path }}/
+          # configure-pages 给出的 base_path 形如 /ZhitongWTP；该步骤失败时回退到仓库名
+          VITE_BASE: ${{ steps.pages.outputs.base_path || format('/{0}', github.event.repository.name) }}/
         run: npm run build:static
 
       - name: 确认预计算数据已打包
