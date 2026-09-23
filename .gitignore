@@ -1,0 +1,23 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 运行期数据：用户上传的数据集不入库
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+
+# 模型权重体积过大，通过 NETAI_MODEL_PATH 从外部指向
+*.safetensors
+Zhitong_SDU_WT_LLM/
+
+# 其他
+.DS_Store
+*.log
+.env

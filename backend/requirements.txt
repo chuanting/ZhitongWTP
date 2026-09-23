@@ -1,0 +1,11 @@
+# NetAILLM 预测平台后端依赖
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pandas>=2.0,<2.4
+numpy>=1.26
+# 时序基础模型（Chronos-2）及其运行时
+chronos-forecasting>=2.2
+torch>=2.2
+transformers>=4.41
+accelerate>=0.34
