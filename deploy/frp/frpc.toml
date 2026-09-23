@@ -1,0 +1,34 @@
+# ── 放在 GPU 服务器上：/etc/frp/frpc.toml ────────────────────────────────────
+# frp 客户端。把本机 127.0.0.1:8010（容器暴露的端口）映射到 VPS 的 127.0.0.1:8011。
+
+serverAddr = "你的VPS公网IP"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "与 frps.toml 中完全一致的令牌"
+
+# 断线自动重连
+loginFailExit = false
+
+# 隧道内加密 + 压缩：frp 隧道本身走公网，加密后即使 VPS 到 GPU 段被监听也读不出内容
+transport.tls.enable = true
+
+log.to = "/var/log/frp/frpc.log"
+log.level = "info"
+log.maxDays = 7
+
+[[proxies]]
+name = "netai-console"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8010
+remotePort = 8011
+transport.useEncryption = true
+transport.useCompression = true
+
+# 健康检查：应用挂了就摘掉隧道，nginx 会直接返回 502 而不是长时间挂起
+healthCheck.type = "http"
+healthCheck.path = "/api/health"
+healthCheck.intervalSeconds = 20
+healthCheck.timeoutSeconds = 5
+healthCheck.maxFailed = 3

@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -171,6 +172,61 @@ def get_dataset(ds_id: str) -> Optional[Dataset]:
     return all_datasets().get(ds_id)
 
 
+def cleanup_uploads() -> List[str]:
+    """清理上传目录：先按 TTL 过期删除，再按总体积上限从旧到新淘汰。
+
+    公网部署下上传文件会一直堆积，没有这一步磁盘迟早被写满。
+    """
+    removed: List[str] = []
+    idx = _read_upload_index()
+    if not idx:
+        return removed
+
+    now = time.time()
+    ttl = config.UPLOAD_TTL_HOURS * 3600
+    entries = []
+    for ds_id, raw in list(idx.items()):
+        path = Path(raw.get("path", ""))
+        if not path.exists():
+            idx.pop(ds_id, None)
+            removed.append(ds_id)
+            continue
+        stat = path.stat()
+        if ttl > 0 and now - stat.st_mtime > ttl:
+            path.unlink(missing_ok=True)
+            idx.pop(ds_id, None)
+            removed.append(ds_id)
+            continue
+        entries.append((stat.st_mtime, stat.st_size, ds_id, path))
+
+    limit = config.UPLOAD_DIR_MAX_MB * 1024 * 1024
+    total = sum(e[1] for e in entries)
+    if limit > 0 and total > limit:
+        for mtime, size, ds_id, path in sorted(entries):     # 最旧的先淘汰
+            if total <= limit:
+                break
+            path.unlink(missing_ok=True)
+            idx.pop(ds_id, None)
+            removed.append(ds_id)
+            total -= size
+
+    if removed:
+        _write_upload_index(idx)
+    return removed
+
+
+def upload_usage() -> Dict[str, Any]:
+    idx = _read_upload_index()
+    total = sum(Path(r["path"]).stat().st_size
+                for r in idx.values() if Path(r.get("path", "")).exists())
+    return {
+        "count": len(idx),
+        "bytes": total,
+        "limit_bytes": int(config.UPLOAD_DIR_MAX_MB * 1024 * 1024),
+        "ttl_hours": config.UPLOAD_TTL_HOURS,
+    }
+
+
 class IngestError(ValueError):
     pass
 
@@ -205,6 +261,7 @@ def _looks_like_time(raw: pd.Series) -> bool:
 def ingest_csv(content: bytes, filename: str) -> tuple[Dataset, List[str]]:
     """解析上传的 CSV，规整到等间隔时间网格并落盘。返回 (数据集, 提示信息)。"""
     notes: List[str] = []
+    cleanup_uploads()
     if len(content) > config.MAX_UPLOAD_BYTES:
         raise IngestError(f"文件超过 {config.MAX_UPLOAD_BYTES // 1024 // 1024} MB 上限")
 

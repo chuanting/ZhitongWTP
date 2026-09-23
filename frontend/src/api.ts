@@ -74,6 +74,11 @@ export interface FinetuneMeta {
   lora?: { r?: number; alpha?: number; dropout?: number; target_modules?: string[] }
 }
 
+export interface AuthStatus {
+  required: boolean
+  authenticated: boolean
+}
+
 export interface ModelInfo {
   label: string
   base_model: string
@@ -83,6 +88,10 @@ export interface ModelInfo {
   finetuned: boolean
   finetune_meta: FinetuneMeta | null
   device: string
+  device_note: string | null
+  device_setting: string
+  queue_depth: number
+  max_queue: number
   loaded: boolean
   load_seconds: number | null
   load_error: string | null
@@ -119,6 +128,8 @@ export interface ForecastRequest {
 
 const BASE = '/api'
 
+export class UnauthorizedError extends Error {}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = `请求失败（HTTP ${res.status}）`
@@ -127,12 +138,24 @@ async function handle<T>(res: Response): Promise<T> {
       if (typeof body?.detail === 'string') detail = body.detail
       else if (Array.isArray(body?.detail) && body.detail[0]?.msg) detail = body.detail[0].msg
     } catch { /* 响应体非 JSON，保留默认提示 */ }
+    if (res.status === 401) throw new UnauthorizedError(detail)
     throw new Error(detail)
   }
   return res.json() as Promise<T>
 }
 
 export const api = {
+  authStatus: () => fetch(`${BASE}/auth/status`).then(handle<AuthStatus>),
+
+  login: (password: string) =>
+    fetch(`${BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    }).then(handle<{ authenticated: boolean; expires_in: number }>),
+
+  logout: () => fetch(`${BASE}/auth/logout`, { method: 'POST' }).then(handle<AuthStatus>),
+
   datasets: () =>
     fetch(`${BASE}/datasets`).then(handle<{ datasets: Dataset[]; defaults: Defaults }>),
 

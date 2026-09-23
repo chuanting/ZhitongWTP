@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, downloadCsv, type Dataset, type Defaults, type ForecastRequest, type ForecastResult, type ModelInfo } from './api'
+import { api, downloadCsv, UnauthorizedError, type AuthStatus, type Dataset, type Defaults, type ForecastRequest, type ForecastResult, type ModelInfo } from './api'
 import { applyMode, readMode, SERIES, type Mode } from './theme'
 import { describeFinetune, formatDateTimeFull, formatNumber } from './format'
 import TopBar from './components/TopBar'
+import LoginGate from './components/LoginGate'
 import DatasetPanel from './components/DatasetPanel'
 import ControlPanel, { type RunConfig } from './components/ControlPanel'
 import ForecastChart from './components/ForecastChart'
@@ -40,6 +41,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState<string[]>([])
   const [booting, setBooting] = useState(true)
+  const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [exporting, setExporting] = useState(false)
   const autoRan = useRef(false)
 
@@ -47,9 +49,21 @@ export default function App() {
 
   useEffect(() => { applyMode(mode) }, [mode])
 
-  // 初始加载：数据集目录 + 模型状态
+  // 先确认会话状态，未通过鉴权时不请求任何受保护接口
   useEffect(() => {
     let alive = true
+    api.authStatus()
+      .then((st) => { if (alive) setAuth(st) })
+      .catch(() => alive && setAuth({ required: true, authenticated: false }))
+      .finally(() => alive && setBooting(false))
+    return () => { alive = false }
+  }, [])
+
+  // 通过鉴权后再加载数据集目录与模型状态
+  useEffect(() => {
+    if (!auth?.authenticated) return
+    let alive = true
+    setBooting(true)
     Promise.all([api.datasets(), api.model().catch(() => null)])
       .then(([cat, mi]) => {
         if (!alive) return
@@ -62,10 +76,14 @@ export default function App() {
           setConfig((c) => ({ ...c, channels: pickChannels(first) }))
         }
       })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : '无法连接后端服务'))
+      .catch((e) => {
+        if (!alive) return
+        if (e instanceof UnauthorizedError) setAuth({ required: true, authenticated: false })
+        else setError(e instanceof Error ? e.message : '无法连接后端服务')
+      })
       .finally(() => alive && setBooting(false))
     return () => { alive = false }
-  }, [])
+  }, [auth?.authenticated])
 
   // 模型冷启动时轮询加载状态，直到常驻内存
   useEffect(() => {
@@ -96,7 +114,8 @@ export default function App() {
       setActiveChannel((prev) =>
         res.channels.some((c) => c.key === prev) ? prev : res.channels[0]?.key ?? '')
     } catch (e) {
-      setError(e instanceof Error ? e.message : '预测失败')
+      if (e instanceof UnauthorizedError) setAuth({ required: true, authenticated: false })
+      else setError(e instanceof Error ? e.message : '预测失败')
     } finally {
       setRunning(false)
     }
@@ -141,9 +160,20 @@ export default function App() {
     } finally { setExporting(false) }
   }
 
+  if (auth && auth.required && !auth.authenticated) {
+    return <LoginGate onSuccess={() => setAuth({ required: true, authenticated: true })} />
+  }
+
   return (
     <div className="flex h-full flex-col bg-surface-0">
-      <TopBar model={model} mode={mode} onToggleMode={() => setMode(mode === 'dark' ? 'light' : 'dark')} />
+      <TopBar model={model} mode={mode} onToggleMode={() => setMode(mode === 'dark' ? 'light' : 'dark')}
+        canLogout={!!auth?.required}
+        onLogout={async () => {
+          await api.logout().catch(() => { /* 本地清状态即可 */ })
+          setAuth({ required: true, authenticated: false })
+          setResult(null)
+          autoRan.current = false
+        }} />
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside className="w-full shrink-0 overflow-y-auto border-edge bg-surface-1 p-4

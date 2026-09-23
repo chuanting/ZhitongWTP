@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.venv
+.git
+.github
+*.log
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+deploy/
+*.md
+!README.md

@@ -22,6 +22,48 @@ _load_error: Optional[str] = None
 _load_seconds: Optional[float] = None
 # Chronos-2 不是线程安全的，推理串行化
 _infer_lock = threading.Lock()
+# 等待进入推理的请求数。GPU/CPU 只有一份，排队太长不如早点告诉调用方稍后再试。
+_waiting = 0
+_waiting_lock = threading.Lock()
+
+
+class QueueFull(RuntimeError):
+    """并发请求超过 NETAI_MAX_QUEUE，拒绝排队。"""
+
+
+class QueueTimeout(RuntimeError):
+    """排队超过 NETAI_QUEUE_TIMEOUT 仍未轮到。"""
+
+
+def queue_depth() -> int:
+    return _waiting
+
+
+class _Slot:
+    """限深 + 超时的推理准入控制。"""
+
+    def __enter__(self):
+        global _waiting
+        with _waiting_lock:
+            if _waiting >= config.MAX_QUEUE:
+                raise QueueFull(
+                    f"当前有 {_waiting} 个预测任务在排队，已达上限 {config.MAX_QUEUE}，请稍后重试")
+            _waiting += 1
+        try:
+            if not _infer_lock.acquire(timeout=config.QUEUE_TIMEOUT):
+                raise QueueTimeout(f"排队超过 {config.QUEUE_TIMEOUT:.0f} 秒仍未轮到，请稍后重试")
+        except BaseException:
+            with _waiting_lock:
+                _waiting -= 1
+            raise
+        return self
+
+    def __exit__(self, *exc):
+        global _waiting
+        _infer_lock.release()
+        with _waiting_lock:
+            _waiting -= 1
+        return False
 
 
 def finetune_meta() -> Optional[Dict[str, Any]]:
@@ -49,6 +91,10 @@ def model_info() -> Dict[str, Any]:
         "loaded": _pipeline is not None,
         "load_seconds": _load_seconds,
         "load_error": _load_error or config.MODEL_PATH_ERROR,
+        "device_note": config.DEVICE_NOTE,
+        "device_setting": config.DEVICE_SETTING,
+        "queue_depth": queue_depth(),
+        "max_queue": config.MAX_QUEUE,
         "finetune_meta": finetune_meta(),
     }
 
@@ -128,7 +174,7 @@ def forecast(
 
     qs = sorted(set(round(float(q), 4) for q in quantiles))
     t0 = time.perf_counter()
-    with _infer_lock:
+    with _Slot():
         pred = pipeline.predict_df(
             df=frame,
             prediction_length=prediction_length,

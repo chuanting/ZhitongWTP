@@ -1,0 +1,19 @@
+# VPS: /etc/systemd/system/frps.service
+[Unit]
+Description=frp server
+After=network.target
+
+[Service]
+Type=simple
+User=frp
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/bin/frps -c /etc/frp/frps.toml
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/frp
+
+[Install]
+WantedBy=multi-user.target

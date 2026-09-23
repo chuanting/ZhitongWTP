@@ -1,0 +1,24 @@
+# ── 备选方案：Cloudflare Tunnel（不需要 VPS，自带 HTTPS）────────────────────
+# 放在 GPU 服务器上：~/.cloudflared/config.yml
+#
+# 与 frp 的取舍：
+#   - 不用买 VPS，不用配证书，不用备案（域名托管在 Cloudflare）
+#   - 但国内访问经由境外节点，延迟和稳定性不如境内 VPS + frp
+#
+# 前置步骤：
+#   cloudflared tunnel login
+#   cloudflared tunnel create netai
+#   cloudflared tunnel route dns netai netai.你的域名
+
+tunnel: netai
+credentials-file: /home/你的用户名/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: netai.你的域名
+    service: http://127.0.0.1:8010
+    originRequest:
+      connectTimeout: 10s
+      # 推理请求留足时间
+      httpHostHeader: netai.你的域名
+      noTLSVerify: false
+  - service: http_status:404

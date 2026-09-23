@@ -1,0 +1,53 @@
+services:
+  netai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: netai-console:latest
+    container_name: netai-console
+    restart: unless-stopped
+    # 只绑到回环：公网由 frp / cloudflared 接管，容器端口不直接对外
+    ports:
+      - "127.0.0.1:8010:8010"
+    environment:
+      # ── 访问控制（必填，留空即完全公开）────────────────────────────────
+      NETAI_ACCESS_PASSWORD: "${NETAI_ACCESS_PASSWORD:?请在 .env 中设置访问口令}"
+      NETAI_SECRET_KEY: "${NETAI_SECRET_KEY:-}"
+      NETAI_COOKIE_SECURE: "${NETAI_COOKIE_SECURE:-1}"
+      NETAI_TRUST_PROXY: "1"
+      NETAI_SESSION_TTL: "${NETAI_SESSION_TTL:-604800}"
+      # ── 模型 ──────────────────────────────────────────────────────────
+      NETAI_DEVICE: "${NETAI_DEVICE:-auto}"
+      NETAI_MODEL_PATH: "${NETAI_MODEL_PATH:-/models/weights}"
+      NETAI_MODEL_LABEL: "${NETAI_MODEL_LABEL:-NetAILLM}"
+      # ── 容量与限流 ────────────────────────────────────────────────────
+      NETAI_MAX_QUEUE: "${NETAI_MAX_QUEUE:-8}"
+      NETAI_QUEUE_TIMEOUT: "${NETAI_QUEUE_TIMEOUT:-120}"
+      NETAI_RATE_FORECAST: "${NETAI_RATE_FORECAST:-30}"
+      NETAI_RATE_UPLOAD: "${NETAI_RATE_UPLOAD:-20}"
+      NETAI_RATE_LOGIN: "${NETAI_RATE_LOGIN:-10}"
+      NETAI_MAX_UPLOAD_MB: "${NETAI_MAX_UPLOAD_MB:-32}"
+      NETAI_UPLOAD_TTL_HOURS: "${NETAI_UPLOAD_TTL_HOURS:-24}"
+      NETAI_UPLOAD_DIR_MAX_MB: "${NETAI_UPLOAD_DIR_MAX_MB:-512}"
+      NETAI_DEV_ORIGINS: ""
+    volumes:
+      # 微调权重：只读挂进容器，镜像里不打包大文件
+      - "${WEIGHTS_DIR:-./weights}:/models/weights:ro"
+      # HF 缓存持久化，避免每次重建都重新下载基座模型
+      - netai-hf:/models/hf
+      # 上传数据持久化（有 TTL 与容量上限自动清理）
+      - netai-uploads:/app/backend/data/uploads
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  netai-hf:
+  netai-uploads:

@@ -3,8 +3,12 @@ import { describeFinetune } from '../format'
 import { Badge, Button } from './ui'
 import type { Mode } from '../theme'
 
-export default function TopBar({ model, mode, onToggleMode }: {
-  model: ModelInfo | null; mode: Mode; onToggleMode: () => void
+export default function TopBar({ model, mode, onToggleMode, canLogout, onLogout }: {
+  model: ModelInfo | null
+  mode: Mode
+  onToggleMode: () => void
+  canLogout?: boolean
+  onLogout?: () => void
 }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-surface-1 px-4">
@@ -30,9 +34,15 @@ export default function TopBar({ model, mode, onToggleMode }: {
                 : `当前使用基座模型 ${model.base_model}；设置环境变量 NETAI_MODEL_PATH 指向微调权重目录（绝对路径）即可切换`}>
               {model.finetuned ? '微调权重' : '基座模型'}
             </Badge>
-            <Badge tone="neutral" title={`推理设备：${model.device}`}>
+            <Badge tone={model.device_note ? 'warning' : 'neutral'}
+              title={model.device_note ?? `推理设备：${model.device}`}>
               <span className="tnum">{model.device.toUpperCase()}</span>
             </Badge>
+            {model.queue_depth > 0 && (
+              <Badge tone="warning" title={`${model.queue_depth} 个任务排队中（上限 ${model.max_queue}）`}>
+                <span className="tnum">排队 {model.queue_depth}</span>
+              </Badge>
+            )}
             <Badge tone={model.load_error ? 'critical' : model.loaded ? 'good' : 'neutral'}
               title={model.load_error ?? (model.loaded ? '模型已常驻内存' : '首次预测时加载模型')}>
               <span className={`h-1.5 w-1.5 rounded-full ${model.load_error ? 'bg-critical' : model.loaded ? 'bg-good' : 'bg-ink-3 pulse'}`}
@@ -45,6 +55,11 @@ export default function TopBar({ model, mode, onToggleMode }: {
           className="!px-2">
           {mode === 'dark' ? '☾' : '☀'}
         </Button>
+        {canLogout && onLogout && (
+          <Button variant="ghost" onClick={onLogout} title="退出登录" className="!px-2 !text-[11px]">
+            退出
+          </Button>
+        )}
       </div>
     </header>
   )

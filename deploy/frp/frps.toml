@@ -1,0 +1,25 @@
+# ── 放在公网 VPS 上：/etc/frp/frps.toml ──────────────────────────────────────
+# frp 服务端。只负责把 GPU 服务器的端口"借"到 VPS 上，TLS 由 nginx 终结。
+
+bindPort = 7000
+
+# 关键：隧道映射出来的端口只绑回环，不直接对公网开放。
+# 公网入口统一走 nginx:443，这样才有 HTTPS 和访问日志。
+proxyBindAddr = "127.0.0.1"
+
+# 客户端认证令牌。生成：openssl rand -hex 24
+auth.method = "token"
+auth.token = "换成你自己的随机令牌"
+
+# 只允许下面列出的端口被映射，避免客户端被盗用后随意开端口
+allowPorts = [{ start = 8011, end = 8011 }]
+
+log.to = "/var/log/frp/frps.log"
+log.level = "info"
+log.maxDays = 7
+
+# 可选：frp 自带的管理面板，同样只绑回环，需要时用 SSH 隧道看
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "换成你自己的面板密码"

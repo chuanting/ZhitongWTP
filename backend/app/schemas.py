@@ -48,3 +48,7 @@ class ForecastRequest(BaseModel):
 class UploadResponse(BaseModel):
     dataset: Dict[str, Any]
     notes: List[str]
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=256)

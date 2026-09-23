@@ -3,31 +3,109 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import math
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import catalog, config, predictor, scoring
-from .schemas import ForecastRequest
+from . import catalog, config, predictor, scoring, security
+from .schemas import ForecastRequest, LoginRequest
 
 app = FastAPI(title="NetAILLM 无线流量预测平台", version="1.0.0", docs_url="/api/docs",
               openapi_url="/api/openapi.json")
-app.add_middleware(
-    CORSMiddleware, allow_origins=["http://localhost:5180", "http://127.0.0.1:5180"],
-    allow_methods=["*"], allow_headers=["*"],
-)
+if config.DEV_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware, allow_origins=config.DEV_ORIGINS, allow_credentials=True,
+        allow_methods=["*"], allow_headers=["*"],
+    )
+
+log = logging.getLogger("netai")
 
 
 @app.on_event("startup")
 def _startup() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    removed = catalog.cleanup_uploads()
+    if removed:
+        log.info("启动清理：移除 %d 个过期上传数据集", len(removed))
+    log.info("推理设备 %s%s", config.DEVICE,
+             f"（{config.DEVICE_NOTE}）" if config.DEVICE_NOTE else "")
+    log.info("访问口令鉴权：%s", "已开启" if security.auth_required() else "未开启（完全公开）")
     threading.Thread(target=predictor.warmup, daemon=True).start()
+    threading.Thread(target=_upload_janitor, daemon=True).start()
+
+
+def _upload_janitor() -> None:
+    """定时清理上传目录，避免长跑进程把磁盘写满。"""
+    while True:
+        time.sleep(1800)
+        try:
+            removed = catalog.cleanup_uploads()
+            if removed:
+                log.info("定时清理：移除 %d 个上传数据集", len(removed))
+        except Exception as exc:
+            log.warning("上传目录清理失败：%s", exc)
+
+
+# ── 鉴权 ────────────────────────────────────────────────────────────────────
+def _ip(request: Request) -> str:
+    return security.client_ip(
+        {k.lower(): v for k, v in request.headers.items()},
+        request.client.host if request.client else "unknown")
+
+
+def require_auth(request: Request) -> None:
+    """受保护接口的依赖项；未开启口令时直接放行。"""
+    if not security.auth_required():
+        return
+    if security.verify_token(request.cookies.get(security.COOKIE_NAME, "")):
+        return
+    raise HTTPException(401, "需要访问口令")
+
+
+def _limit(limiter: security.RateLimiter, request: Request) -> None:
+    retry = limiter.check(_ip(request))
+    if retry is not None:
+        raise HTTPException(429, f"请求过于频繁，请 {retry} 秒后重试",
+                            headers={"Retry-After": str(retry)})
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request) -> Dict[str, Any]:
+    return {
+        "required": security.auth_required(),
+        "authenticated": (not security.auth_required())
+        or security.verify_token(request.cookies.get(security.COOKIE_NAME, "")),
+    }
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest, request: Request, response: Response) -> Dict[str, Any]:
+    if not security.auth_required():
+        return {"authenticated": True}
+    _limit(security.login_limiter, request)
+    if not security.check_password(body.password):
+        log.warning("登录失败：来源 %s", _ip(request))
+        raise HTTPException(401, "访问口令不正确")
+    token, ttl = security.issue_token()
+    response.set_cookie(
+        security.COOKIE_NAME, token, max_age=ttl, httponly=True,
+        samesite="lax", secure=config.COOKIE_SECURE, path="/")
+    return {"authenticated": True, "expires_in": ttl}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response) -> Dict[str, Any]:
+    response.delete_cookie(security.COOKIE_NAME, path="/")
+    return {"authenticated": False}
 
 
 def _clean(x: Any) -> Any:
@@ -51,16 +129,21 @@ def _clean_metrics(m: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 # ── 基础信息 ────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
-    return {"status": "ok", "model": predictor.model_info()}
+    return {
+        "status": "ok",
+        "model": predictor.model_info(),
+        "auth_required": security.auth_required(),
+        "uploads": catalog.upload_usage(),
+    }
 
 
 @app.get("/api/model")
-def model() -> Dict[str, Any]:
+def model(_: None = Depends(require_auth)) -> Dict[str, Any]:
     return predictor.model_info()
 
 
 @app.get("/api/datasets")
-def list_datasets() -> Dict[str, Any]:
+def list_datasets(_: None = Depends(require_auth)) -> Dict[str, Any]:
     items = [d.to_dict() for d in catalog.all_datasets().values()]
     items.sort(key=lambda d: (d["source"] != "demo", d["name"]))
     return {"datasets": items, "defaults": {
@@ -80,7 +163,8 @@ def _require(ds_id: str) -> catalog.Dataset:
 
 
 @app.get("/api/datasets/{ds_id}/series")
-def series(ds_id: str, channel: str = Query(...), max_points: int = Query(1200, ge=100, le=6000)):
+def series(ds_id: str, channel: str = Query(...), max_points: int = Query(1200, ge=100, le=6000),
+           _: None = Depends(require_auth)):
     """历史概览序列；超过 max_points 时按等宽分桶取均值。"""
     ds = _require(ds_id)
     df = catalog.load_frame(ds)
@@ -104,7 +188,9 @@ def series(ds_id: str, channel: str = Query(...), max_points: int = Query(1200, 
 
 
 @app.post("/api/datasets/upload")
-async def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def upload(request: Request, file: UploadFile = File(...),
+                 _: None = Depends(require_auth)) -> Dict[str, Any]:
+    _limit(security.upload_limiter, request)
     if not file.filename or not file.filename.lower().endswith((".csv", ".txt")):
         raise HTTPException(400, "仅支持 .csv 文件")
     content = await file.read()
@@ -116,7 +202,7 @@ async def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
 
 
 @app.delete("/api/datasets/{ds_id}")
-def delete_dataset(ds_id: str) -> Dict[str, Any]:
+def delete_dataset(ds_id: str, _: None = Depends(require_auth)) -> Dict[str, Any]:
     ds = _require(ds_id)
     if ds.source != "upload":
         raise HTTPException(400, "内置 Demo 数据集不可删除")
@@ -145,7 +231,9 @@ def _resolve_anchor(df: pd.DataFrame, req: ForecastRequest) -> int:
 
 
 @app.post("/api/forecast")
-def run_forecast(req: ForecastRequest) -> Dict[str, Any]:
+def run_forecast(req: ForecastRequest, request: Request,
+                 _: None = Depends(require_auth)) -> Dict[str, Any]:
+    _limit(security.forecast_limiter, request)
     ds = _require(req.dataset_id)
     df = catalog.load_frame(ds)
 
@@ -164,6 +252,8 @@ def run_forecast(req: ForecastRequest) -> Dict[str, Any]:
             context, req.channels, req.prediction_length, req.quantiles)
     except HTTPException:
         raise
+    except (predictor.QueueFull, predictor.QueueTimeout) as exc:
+        raise HTTPException(503, str(exc), headers={"Retry-After": "10"}) from exc
     except Exception as exc:
         raise HTTPException(500, f"推理失败：{type(exc).__name__}: {exc}") from exc
 
@@ -236,9 +326,10 @@ def run_forecast(req: ForecastRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/forecast/export")
-def export_forecast(req: ForecastRequest) -> StreamingResponse:
+def export_forecast(req: ForecastRequest, request: Request,
+                    _: None = Depends(require_auth)) -> StreamingResponse:
     """把预测结果导出为 CSV（长表：时间 × 通道 × 预测/真实/基线/分位数）。"""
-    result = run_forecast(req)
+    result = run_forecast(req, request, None)
     qkeys = [f"{q:g}" for q in req.quantiles]
     buf = io.StringIO()
     w = csv.writer(buf)
